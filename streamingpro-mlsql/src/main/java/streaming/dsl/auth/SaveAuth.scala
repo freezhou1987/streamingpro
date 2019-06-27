@@ -21,13 +21,15 @@ package streaming.dsl.auth
 import streaming.core.datasource.{DataAuthConfig, DataSourceRegistry, SourceInfo}
 import streaming.dsl.parser.DSLSQLParser._
 import streaming.dsl.template.TemplateMerge
-import streaming.dsl.{AuthProcessListener, DslTool}
+import streaming.dsl.{DslTool, ScriptSQLExec}
+import streaming.log.{Logging, WowLog}
+import tech.mlsql.dsl.processor.AuthProcessListener
 
 
 /**
   * Created by allwefantasy on 11/9/2018.
   */
-class SaveAuth(authProcessListener: AuthProcessListener) extends MLSQLAuth with DslTool {
+class SaveAuth(authProcessListener: AuthProcessListener) extends MLSQLAuth with DslTool with Logging with WowLog {
   val env = authProcessListener.listener.env().toMap
 
   def evaluate(value: String) = {
@@ -43,29 +45,15 @@ class SaveAuth(authProcessListener: AuthProcessListener) extends MLSQLAuth with 
     var partitionByCol = Array[String]()
 
     val owner = option.get("owner")
+    var path = ""
 
     (0 to ctx.getChildCount() - 1).foreach { tokenIndex =>
       ctx.getChild(tokenIndex) match {
         case s: FormatContext =>
           format = s.getText
-          format match {
-            case "hive" =>
-            case _ =>
-              format = s.getText
-          }
-
 
         case s: PathContext =>
-          format match {
-            case "hive" | "kafka8" | "kafka9" | "hbase" | "redis" | "es" | "jdbc" =>
-              final_path = cleanStr(s.getText)
-            case "parquet" | "json" | "csv" | "orc" =>
-              final_path = withPathPrefix(authProcessListener.listener.pathPrefix(owner), cleanStr(s.getText))
-            case _ =>
-              final_path = cleanStr(s.getText)
-          }
-
-          final_path = TemplateMerge.merge(final_path, env)
+          path = TemplateMerge.merge(cleanStr(s.getText), env)
 
         case s: TableNameContext =>
           tableName = s.getText
@@ -79,17 +67,29 @@ class SaveAuth(authProcessListener: AuthProcessListener) extends MLSQLAuth with 
       }
     }
 
+    val tableType = TableType.from(format) match {
+      case Some(tt) => tt
+      case None =>
+        logWarning(wow_format(s"format ${format} is not supported yet by auth."))
+        TableType.UNKNOW
+
+    }
+
     val mLSQLTable = DataSourceRegistry.fetch(format, option).map { datasource =>
       val sourceInfo = datasource.asInstanceOf[ {def sourceInfo(config: DataAuthConfig): SourceInfo}].
-        sourceInfo(DataAuthConfig(final_path, option))
-      MLSQLTable(Some(sourceInfo.db), Some(sourceInfo.table), OperateType.SAVE , Some(sourceInfo.sourceType), TableType.from(format).get)
+        sourceInfo(DataAuthConfig(path, option))
+      MLSQLTable(Some(sourceInfo.db), Some(sourceInfo.table), OperateType.SAVE, Some(sourceInfo.sourceType), tableType)
     } getOrElse {
       format match {
         case "hive" =>
-          val Array(db, table) = final_path.split("\\.")
-          MLSQLTable(Some(db), Some(table), OperateType.SAVE ,Some(format) , TableType.HIVE)
+          val Array(db, table) = final_path.split("\\.") match {
+            case Array(db, table) => Array(db, table)
+            case Array(table) => Array("default", table)
+          }
+          MLSQLTable(Some(db), Some(table), OperateType.SAVE, Some(format), TableType.HIVE)
         case _ =>
-          MLSQLTable(None, Some(final_path), OperateType.SAVE ,Some(format) , TableType.from(format).get)
+          val context = ScriptSQLExec.contextGetOrForTest()
+          MLSQLTable(None, Some(resourceRealPath(context.execListener, owner, path)), OperateType.SAVE, Some(format), tableType)
       }
     }
 

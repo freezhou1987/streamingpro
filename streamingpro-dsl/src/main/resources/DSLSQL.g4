@@ -13,21 +13,59 @@ statement
 
 
 sql
-    : 'load' format '.' path ('options'|'where')? expression? booleanExpression* 'as' tableName
-    | 'save' (overwrite | append | errorIfExists |ignore)* tableName 'as' format '.' path ('options'|'where')? expression? booleanExpression* (('partitionBy'|'partitionby') col? colGroup*)?
-    | 'select' ~(';')* 'as' tableName
-    | 'insert' ~(';')*
-    | 'create' ~(';')*
-    | 'drop' ~(';')*
-    | 'refresh' ~(';')*
-    | 'set' setKey '=' setValue ('options'|'where')? expression? booleanExpression*
-    | 'connect' format ('options'|'where')? expression? booleanExpression* ('as' db)?
-    | ('train'|'run'|'predict') tableName 'as' format '.' path ('options'|'where')? expression? booleanExpression* asTableName*
-    | 'register' format '.' path 'as' functionName ('options'|'where')? expression? booleanExpression*
-    | 'unregister' format '.' path ('options'|'where')? expression? booleanExpression*
-    | 'include' format '.' path ('options'|'where')? expression? booleanExpression*
-    |  SIMPLE_COMMENT
+    : LOAD format '.' path where? expression? booleanExpression* as tableName
+    | SAVE (overwrite | append | errorIfExists |ignore)* tableName as format '.' path where? expression? booleanExpression* (PARTITIONBY col? colGroup*)?
+    | SELECT ~(';')* as tableName
+    | INSERT ~(';')*
+    | CREATE ~(';')*
+    | DROP ~(';')*
+    | REFRESH ~(';')*
+    | SET setKey '=' setValue where? expression? booleanExpression*
+    | CONNECT format where? expression? booleanExpression* (as db)?
+    | (TRAIN|RUN|PREDICT) tableName (as|into) format '.' path where? expression? booleanExpression* asTableName*
+    | REGISTER format '.' path as functionName where? expression? booleanExpression*
+    | UNREGISTER format '.' path where? expression? booleanExpression*
+    | INCLUDE format '.' path where? expression? booleanExpression*
+    | EXECUTE_COMMAND (commandValue|rawCommandValue)*
+    | SIMPLE_COMMENT
     ;
+
+//keywords
+AS: 'as';
+INTO: 'into';
+LOAD: 'load';
+SAVE: 'save';
+SELECT: 'select';
+INSERT: 'insert';
+CREATE: 'create';
+DROP: 'drop';
+REFRESH: 'refresh';
+SET: 'set';
+CONNECT: 'connect';
+TRAIN: 'train';
+RUN: 'run';
+PREDICT: 'predict';
+REGISTER: 'register';
+UNREGISTER: 'unregister';
+INCLUDE: 'include';
+OPTIONS:'options';
+WHERE:'where';
+PARTITIONBY:'partitionBy'|'partitionby';
+OVERWRITE:'overwrite';
+APPEND:'append';
+ERRORIfExists:'errorIfExists';
+IGNORE:'ignore';
+
+
+as: AS;
+into: INTO;
+
+saveMode: (OVERWRITE|APPEND|ERRORIfExists|IGNORE);
+
+where: OPTIONS|WHERE;
+
+whereExpressions: where expression? booleanExpression*;
+
 
 overwrite
     : 'overwrite'
@@ -64,6 +102,10 @@ format
 path
     : quotedIdentifier | identifier
     ;
+
+commandValue: quotedIdentifier | STRING | BLOCK_STRING;
+rawCommandValue: (identifier | '-' | '/' | '>' | '<' | '.' | '~')+ ;
+
 
 setValue
     : qualifiedName | quotedIdentifier | STRING | BLOCK_STRING
@@ -139,6 +181,13 @@ fragment DIGIT
 fragment LETTER
     : [a-zA-Z]
     ;
+
+EXECUTE_COMMAND
+    : EXECUTE_TOKEN (LETTER | DIGIT | '_')+
+    ;
+
+
+EXECUTE_TOKEN: '!';
 
 SIMPLE_COMMENT
     : '--' ~[\r\n]* '\r'? '\n'? -> channel(HIDDEN)

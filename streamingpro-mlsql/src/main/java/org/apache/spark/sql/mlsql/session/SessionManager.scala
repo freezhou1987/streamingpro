@@ -21,8 +21,8 @@ package org.apache.spark.sql.mlsql.session
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.SparkSession
-import streaming.core.StreamingproJobManager
 import streaming.log.Logging
+import tech.mlsql.job.JobManager
 
 /**
   * Created by allwefantasy on 1/6/2018.
@@ -58,7 +58,7 @@ class SessionManager(rootSparkSession: SparkSession) extends Logging {
       withImpersonation,
       this, opManager
     )
-    log.info(s"Opening session for $username")
+    logInfo(s"Opening session for $username")
     session.open(sessionConf)
 
     identifierToSession.put(SessionIdentifier(username), session)
@@ -79,22 +79,25 @@ class SessionManager(rootSparkSession: SparkSession) extends Logging {
     }
   }
 
+  def getSessionOption(sessionIdentifier: SessionIdentifier): Option[MLSQLSession] = {
+    val session = getSession(sessionIdentifier)
+    if (session == null) None else Some(session)
+  }
+
   def closeSession(sessionIdentifier: SessionIdentifier) {
-    val runningJobCnt = StreamingproJobManager.getJobInfo
+    val runningJobCnt = JobManager.getJobInfo
       .filter(_._2.owner == sessionIdentifier.owner)
       .size
 
-    if(runningJobCnt == 0){
+    if (runningJobCnt == 0) {
       val session = identifierToSession.remove(sessionIdentifier)
       if (session == null) {
         throw new MLSQLException(s"Session $sessionIdentifier does not exist!")
       }
-      val sessionUser = session.getUserName
-      SparkSessionCacheManager.get.decrease(sessionUser)
       session.close()
-    }else{
+    } else {
       SparkSessionCacheManager.get.visit(sessionIdentifier.owner)
-      log.info(s"Session can't close ,$runningJobCnt jobs are running")
+      logInfo(s"Session can't close ,$runningJobCnt jobs are running")
     }
   }
 

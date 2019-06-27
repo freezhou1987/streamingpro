@@ -7,9 +7,10 @@ MLSQL is a Language which is the superset of SQL and  a distributed compute engi
 
 ![](https://github.com/allwefantasy/streamingpro/raw/master/images/WX20181106-164911.png)
 
-Find more examples on [our user guide](https://github.com/allwefantasy/streamingpro/blob/master/docs/docv2/user-guide.md).
+Find more examples on [our user guide](http://docs.mlsql.tech/en).
 
-[中文文档](http://docs.mlsql.tech/zh)
+1. [中文文档](http://docs.mlsql.tech/zh)
+2. [English Docs](http://docs.mlsql.tech/en)
 
 ## Fork and Contribute
 
@@ -27,9 +28,9 @@ This guide document introduce [how to contribute to MLSQL](https://github.com/al
 
 ## Get PreBuild Distribution
 
-* The lasted version is MLSQL-v1.1.7.1
+* The lasted version is MLSQL v1.2.0
 * You can download from [MLSQL Website](http://download.mlsql.tech/)
-* Spark 2.2.0/2.3.2/2.4.0 are tested
+* Spark 2.3.2/2.4.3 are tested
 
 
 Run PreBuild Distribution:
@@ -79,4 +80,12 @@ export DISTRIBUTION=false
 
 ----------
 [![HitCount](http://hits.dwyl.io/allwefantasy/streamingpro.svg)](http://hits.dwyl.io/allwefantasy/streamingpro)
+
+----------
+
+## ChatRoom
+
+![](http://docs.mlsql.tech/upload_images/qq_small.png) 
+![](http://docs.mlsql.tech/upload_images/dingding_small.png)
+
 

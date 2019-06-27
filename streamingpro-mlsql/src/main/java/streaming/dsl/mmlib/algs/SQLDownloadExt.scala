@@ -20,16 +20,19 @@ package streaming.dsl.mmlib.algs
 
 import java.net.URLEncoder
 
+import net.csdn.common.reflect.ReflectHelper
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.http.HttpResponse
 import org.apache.http.client.fluent.Request
 import org.apache.spark.ml.param.Param
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.mlsql.session.MLSQLException
 import org.apache.spark.sql.{DataFrame, SparkSession}
-import streaming.common.HDFSOperator
+import streaming.common.{HDFSOperator, PathFun}
 import streaming.dsl.ScriptSQLExec
 import streaming.dsl.mmlib.SQLAlg
 import streaming.dsl.mmlib.algs.param.{BaseParams, WowParams}
+import streaming.log.{Logging, WowLog}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -37,7 +40,7 @@ import scala.collection.mutable.ArrayBuffer
   * 2019-02-18 WilliamZhu(allwefantasy@gmail.com)
   * run command DownloadExt.`` where from="" and to=""
   */
-class SQLDownloadExt(override val uid: String) extends SQLAlg with WowParams {
+class SQLDownloadExt(override val uid: String) extends SQLAlg with Logging with WowLog with WowParams {
 
 
   def evaluate(value: String) = {
@@ -77,6 +80,8 @@ class SQLDownloadExt(override val uid: String) extends SQLAlg with WowParams {
     }.getOrElse {
       throw new MLSQLException(s"${to.name} is required")
     }
+
+    val originalTo = params(to.name)
     val context = ScriptSQLExec.context()
     val fromUrl = context.userDefinedParam.get("__default__fileserver_url__") match {
       case Some(fileServer) => fileServer
@@ -85,18 +90,29 @@ class SQLDownloadExt(override val uid: String) extends SQLAlg with WowParams {
         $(from)
     }
 
-    val auth_secret = context.userDefinedParam("__auth_secret__")
+    val auth_secret = context.userDefinedParam.get("__auth_secret__") match {
+      case Some(as) => as
+      case None =>
+        logWarning(format(s"DownloadExt  will visit ${fromUrl} file server without auth"))
+        ""
+    }
 
     def urlencode(name: String) = {
       URLEncoder.encode(name, "utf-8")
     }
 
+    logInfo(format(s"download file from src:${$(from)} to dst:${$(to)}"))
+
     val getUrl = fromUrl + s"?userName=${urlencode(context.owner)}&fileName=${urlencode($(from))}&auth_secret=${urlencode(auth_secret)}"
-    val stream = Request.Get(getUrl)
+
+    val response = Request.Get(getUrl)
       .connectTimeout(60 * 1000)
       .socketTimeout(10 * 60 * 1000)
-      .execute().returnContent().asStream()
+      .execute()
+    // Since response always consume the inputstream and return new stream, this will cost too much memory.
+    val stream = ReflectHelper.field(response, "response").asInstanceOf[HttpResponse].getEntity.getContent
     val tarIS = new TarArchiveInputStream(stream)
+
     var downloadResultRes = ArrayBuffer[DownloadResult]()
     try {
       var entry = tarIS.getNextEntry
@@ -104,7 +120,8 @@ class SQLDownloadExt(override val uid: String) extends SQLAlg with WowParams {
         if (tarIS.canReadEntryData(entry)) {
           if (!entry.isDirectory) {
             val dir = entry.getName.split("/").filterNot(f => f.isEmpty).dropRight(1).mkString("/")
-            downloadResultRes += DownloadResult($(to) + "/" + dir + "/" + entry.getName.split("/").last)
+            downloadResultRes += DownloadResult(PathFun(originalTo).add(dir).add(entry.getName.split("/").last).toPath)
+            logInfo(format(s"extracting ${downloadResultRes.last.hdfsPath}"))
             HDFSOperator.saveStream($(to) + "/" + dir, entry.getName.split("/").last, tarIS)
           }
           entry = tarIS.getNextEntry

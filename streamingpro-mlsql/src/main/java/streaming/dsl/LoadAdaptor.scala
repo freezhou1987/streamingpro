@@ -18,13 +18,21 @@
 
 package streaming.dsl
 
+import org.apache.spark.sql.catalyst.parser.LegacyTypeStringParser
+import org.apache.spark.sql.types.{DataType, StructType}
 import org.apache.spark.sql.{DataFrame, DataFrameReader, functions => F}
 import streaming.core.datasource._
 import streaming.dsl.auth.TableType
-import streaming.dsl.load.batch.{AutoWorkflowSelfExplain, ModelSelfExplain}
+import streaming.dsl.load.batch.ModelSelfExplain
 import streaming.dsl.parser.DSLSQLParser._
 import streaming.dsl.template.TemplateMerge
+import streaming.source.parser.impl.JsonSourceParser
 import streaming.source.parser.{SourceParser, SourceSchema}
+import tech.mlsql.MLSQLEnvKey
+import tech.mlsql.dsl.auth.DatasourceAuth
+import tech.mlsql.sql.MLSQLSparkConf
+
+import scala.util.Try
 
 /**
   * Created by allwefantasy on 27/8/2017.
@@ -102,7 +110,9 @@ class LoadPRocessing(scriptSQLExecListener: ScriptSQLExecListener,
         val authConf = DataAuthConfig(dsConf.path, dsConf.config)
         sourceInfo = Option(datasource.asInstanceOf[MLSQLSourceInfo].sourceInfo(authConf))
       }
-
+      if (datasource.isInstanceOf[DatasourceAuth]) {
+        datasource.asInstanceOf[DatasourceAuth].auth(dsConf.path, dsConf.config)
+      }
       // return the load table
       table
     }.getOrElse {
@@ -110,11 +120,7 @@ class LoadPRocessing(scriptSQLExecListener: ScriptSQLExecListener,
       val resourcePath = resourceRealPath(scriptSQLExecListener, option.get("owner"), path)
 
       table = ModelSelfExplain(format, cleanStr(path), option, sparkSession).isMatch.thenDo.orElse(() => {
-
-        AutoWorkflowSelfExplain(format, cleanStr(path), option, sparkSession).isMatch.thenDo().orElse(() => {
-          reader.format(format).load(resourcePath)
-        }).get()
-
+        reader.format(format).load(resourcePath)
       }).get
     }
 
@@ -142,6 +148,14 @@ class LoadPRocessing(scriptSQLExecListener: ScriptSQLExecListener,
 
       table = withWaterMark(table, option)
 
+      def deserializeSchema(json: String): StructType = {
+        Try(DataType.fromJson(json)).getOrElse(LegacyTypeStringParser.parse(json)) match {
+          case t: StructType => t
+          case _ => throw new RuntimeException(s"Failed parsing StructType: $json")
+        }
+      }
+
+
       if (option.contains("valueSchema") && option.contains("valueFormat")) {
         val kafkaFields = List("key", "partition", "offset", "timestamp", "timestampType", "topic")
         val keepOriginalValue = if (option.getOrElse("keepValue", "false").toBoolean) List("value") else List()
@@ -155,6 +169,28 @@ class LoadPRocessing(scriptSQLExecListener: ScriptSQLExecListener,
           .select("data.*", "kafkaValue")
       }
 
+      if (!option.contains("valueSchema") && !option.contains("valueFormat")) {
+        val context = ScriptSQLExec.contextGetOrForTest()
+
+        val kafkaSchemaOpt = context.execListener.env().get(MLSQLEnvKey.CONTEXT_KAFKA_SCHEMA)
+        kafkaSchemaOpt match {
+          case Some(schema) =>
+
+            val kafkaFields = List("key", "partition", "offset", "timestamp", "timestampType", "topic")
+            val keepOriginalValue = if (option.getOrElse("keepValue", "false").toBoolean) List("value") else List()
+            val sourceSchema = deserializeSchema(schema)
+            val sourceParserInstance = new JsonSourceParser()
+
+            table = table.withColumn("kafkaValue", F.struct(
+              (kafkaFields ++ keepOriginalValue).map(F.col(_)): _*
+            )).selectExpr("CAST(value AS STRING) as tmpValue", "kafkaValue")
+              .select(sourceParserInstance.parseRaw(F.col("tmpValue"), sourceSchema, Map()).as("data"), F.col("kafkaValue"))
+              .select("data.*", "kafkaValue")
+          case None =>
+        }
+      }
+
+
       path = TemplateMerge.merge(path, scriptSQLExecListener.env().toMap)
     }
 
@@ -165,15 +201,9 @@ class LoadPRocessing(scriptSQLExecListener: ScriptSQLExecListener,
                    config: DataSourceConfig,
                    sourceInfo: Option[SourceInfo],
                    context: MLSQLExecuteContext): DataFrame = {
-    val rewrite = df.sparkSession
-      .sparkContext
-      .getConf
-      .getBoolean("spark.mlsql.enable.datasource.rewrite", false)
+    val rewrite = MLSQLSparkConf.runtimeLoadRewrite
 
-    val implClass = df.sparkSession
-      .sparkContext
-      .getConf
-      .get("spark.mlsql.datasource.rewrite.implClass", "")
+    val implClass = MLSQLSparkConf.runtimeLoadRewriteImpl
 
     if (rewrite && implClass != "") {
       val instance = Class.forName(implClass)

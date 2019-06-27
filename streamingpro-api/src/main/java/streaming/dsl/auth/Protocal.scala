@@ -75,16 +75,25 @@ object OperateType extends Enumeration {
   val CREATE = Value("create")
   val DROP = Value("drop")
   val INSERT = Value("insert")
+  val UPDATE = Value("update")
   val SELECT = Value("select")
   val SET = Value("set")
   val EMPTY = Value("empty")
+
+  def toList = {
+    List(SAVE.toString, LOAD.toString, DIRECT_QUERY.toString,
+      CREATE.toString, DROP.toString, INSERT.toString, UPDATE.toString,
+      SELECT.toString, SET.toString, EMPTY.toString)
+  }
 }
 
 
 object TableType {
   val HIVE = TableTypeMeta("hive", Set("hive"))
+  val CUSTOME = TableTypeMeta("custom", Set("custom"))
+  val BINLOG = TableTypeMeta("binlog", Set("binlog"))
   val HBASE = TableTypeMeta("hbase", Set("hbase"))
-  val HDFS = TableTypeMeta("hdfs", Set("parquet", "json", "csv", "image", "text", "xml", "excel"))
+  val HDFS = TableTypeMeta("hdfs", Set("parquet", "binlogRate", "json", "csv", "image", "text", "xml", "excel", "libsvm", "delta", "rate", "streamParquet"))
   val HTTP = TableTypeMeta("http", Set("http"))
   val JDBC = TableTypeMeta("jdbc", Set("jdbc", "streamJDBC"))
   val ES = TableTypeMeta("es", Set("es"))
@@ -92,8 +101,8 @@ object TableType {
   val KAFKA = TableTypeMeta("kafka", Set("kafka", "kafka8", "kafka9"))
   val SOCKET = TableTypeMeta("socket", Set("socket"))
   val MONGO = TableTypeMeta("mongo", Set("mongo"))
-  val SOLR = TableTypeMeta("solr", Set("solr"))
-  val TEMP = TableTypeMeta("temp", Set("temp", "jsonStr", "script", "csvStr", "mockStream", "console"))
+  val SOLR = TableTypeMeta("solr", Set("solr", "streamSolr"))
+  val TEMP = TableTypeMeta("temp", Set("temp", "jsonStr", "script", "csvStr", "mockStream", "console", "webConsole"))
   val API = TableTypeMeta("api", Set("mlsqlAPI", "mlsqlConf"))
   val WEB = TableTypeMeta("web", Set("crawlersql"))
   val GRAMMAR = TableTypeMeta("grammar", Set("grammar"))
@@ -101,10 +110,10 @@ object TableType {
   val UNKNOW = TableTypeMeta("unknow", Set("unknow"))
 
   def from(str: String) = {
-    List(UNKNOW, KAFKA, SOCKET, REDIS, HIVE, HBASE, HDFS, HTTP, JDBC, ES, MONGO, SOLR, TEMP, API, WEB, GRAMMAR, SYSTEM).filter(f => f.includes.contains(str)).headOption
+    List(BINLOG, UNKNOW, KAFKA, SOCKET, REDIS, HIVE, HBASE, HDFS, HTTP, JDBC, ES, MONGO, SOLR, TEMP, API, WEB, GRAMMAR, SYSTEM, CUSTOME).filter(f => f.includes.contains(str)).headOption
   }
 
   def toList = {
-    List(UNKNOW, KAFKA, SOCKET, REDIS, HIVE, HBASE, HDFS, HTTP, JDBC, ES, MONGO, SOLR, TEMP, API, WEB, GRAMMAR, SYSTEM).flatMap(f => f.includes.toSeq)
+    List(BINLOG, UNKNOW, KAFKA, SOCKET, REDIS, HIVE, HBASE, HDFS, HTTP, JDBC, ES, MONGO, SOLR, TEMP, API, WEB, GRAMMAR, SYSTEM, CUSTOME).map(f => f.name)
   }
 }

@@ -20,10 +20,11 @@ package streaming.dsl.auth
 
 import org.antlr.v4.runtime.misc.Interval
 import org.apache.spark.sql.execution.MLSQLAuthParser
+import streaming.dsl.DslTool
 import streaming.dsl.parser.DSLSQLLexer
 import streaming.dsl.parser.DSLSQLParser._
 import streaming.dsl.template.TemplateMerge
-import streaming.dsl.{AuthProcessListener, DslTool}
+import tech.mlsql.dsl.processor.AuthProcessListener
 
 
 /**
@@ -51,26 +52,32 @@ class SelectAuth(authProcessListener: AuthProcessListener) extends MLSQLAuth wit
     val tableName = chunks.last.replace(";", "")
     val sql = wowText.replaceAll(s"as[\\s|\\n]+${tableName}", "")
 
+    def isTempTable(name: String) = {
+      authProcessListener.listener.sparkSession.catalog.tableExists(name)
+    }
+
     val tableRefs = MLSQLAuthParser.filterTables(sql, authProcessListener.listener.sparkSession)
 
-    val tables = tableRefs.foreach { f =>
+    tableRefs.foreach { f =>
       f.database match {
         case Some(db) =>
           val exists = authProcessListener.withDBs.filter(m => f.table == m.table.get && db == m.db.get).size > 0
           if (!exists) {
-            authProcessListener.addTable(MLSQLTable(Some(db), Some(f.table) ,OperateType.SELECT , None, TableType.HIVE))
+            authProcessListener.addTable(MLSQLTable(Some(db), Some(f.table), OperateType.SELECT, None, TableType.HIVE))
           }
         case None =>
           val exists = authProcessListener.withoutDBs.filter(m => f.table == m.table.get).size > 0
           if (!exists) {
-            authProcessListener.addTable(MLSQLTable(Some("default"), Some(f.table) ,OperateType.SELECT , None, TableType.HIVE))
+            val tTDB = if (isTempTable(f.table)) None else Some("default")
+            val tTType = if (isTempTable(f.table)) TableType.TEMP else TableType.HIVE
+            authProcessListener.addTable(MLSQLTable(tTDB, Some(f.table), OperateType.SELECT, None, tTType))
           }
       }
     }
 
-    val exists = authProcessListener.withoutDBs.filter(m => tableName == m.table.get).size > 0
+    val exists = authProcessListener.withoutDBs.filter(m => cleanStr(tableName) == m.table.get).size > 0
     if (!exists) {
-      authProcessListener.addTable(MLSQLTable(None, Some(tableName) ,OperateType.SELECT , None, TableType.TEMP))
+      authProcessListener.addTable(MLSQLTable(None, Some(cleanStr(tableName)), OperateType.SELECT, None, TableType.TEMP))
     }
 
 

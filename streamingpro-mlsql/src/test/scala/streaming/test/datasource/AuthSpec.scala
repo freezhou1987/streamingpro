@@ -1,5 +1,9 @@
 package streaming.test.datasource
 
+import com.alibaba.druid.util.JdbcConstants
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.plans.logical.MLSQLDFParser
+import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.streaming.BasicSparkOperation
 import org.scalatest.BeforeAndAfterAll
 import streaming.core.strategy.platform.SparkRuntime
@@ -9,6 +13,9 @@ import streaming.dsl.auth.meta.client.DefaultConsoleClient
 import streaming.dsl.auth.{OperateType, TableType}
 import streaming.log.Logging
 import streaming.test.datasource.help.MLSQLTableEnhancer._
+import tech.mlsql.sql.MLSQLSQLParser
+
+import scala.collection.mutable
 
 /**
   * 2019-03-20 WilliamZhu(allwefantasy@gmail.com)
@@ -143,7 +150,24 @@ class AuthSpec extends BasicSparkOperation with SpecFunctions with BasicMLSQLCon
 
       assert(tables.filter(f => f.tableType.name == "temp").size == 2)
 
+      executeScript(
+        """
+          |select * from k as tableNew;
+        """.stripMargin)
+      tables = DefaultConsoleClient.get
+      var tempTables = tables.filter(f => f.tableType.name == "hive")
+      assert(tempTables.size == 1)
 
+
+      runtime.sparkSession.sql("select 1 as a ").createOrReplaceTempView("k")
+      executeScript(
+        """
+          |select * from k as tableNew;
+        """.stripMargin)
+      tables = DefaultConsoleClient.get
+      tempTables = tables.filter(f => f.tableType.name == "temp")
+      assert(tempTables.size == 2)
+      assert(tempTables(0).tableType.name == "temp" && tempTables(0).table.get == "k")
     }
   }
 
@@ -170,6 +194,12 @@ class AuthSpec extends BasicSparkOperation with SpecFunctions with BasicMLSQLCon
           |
           |save overwrite test_table as mongo.`mongo_instance/cool_2` where
           |    partitioner="MongoPaginateBySizePartitioner";
+          |
+          |load mongo.`cool_10` where
+          |    partitioner="MongoPaginateBySizePartitioner"
+          |and uri="mongodb://127.0.0.1:27017/twitter_1"
+          |and database="twitter_10"
+          |as test_table_3;
         """.stripMargin
       executeScript(mlsql)
       var tables = DefaultConsoleClient.get
@@ -178,9 +208,9 @@ class AuthSpec extends BasicSparkOperation with SpecFunctions with BasicMLSQLCon
         .filter(f => (f.tableType == TableType.MONGO && f.operateType == OperateType.LOAD))
 
       var table = loadMLSQLTable.map(f => f.table.get).toSet
-      assume(table == Set("cool", "cool_1"))
+      assume(table == Set("cool", "cool_1", "cool_10"))
       var db = loadMLSQLTable.map(f => f.db.get).toSet
-      assume(db == Set("twitter", "twitter_1"))
+      assume(db == Set("twitter", "twitter_1", "twitter_10"))
       var sourceType = loadMLSQLTable.map(f => f.sourceType.get).toSet
       assume(sourceType == Set("mongo"))
 
@@ -368,31 +398,92 @@ class AuthSpec extends BasicSparkOperation with SpecFunctions with BasicMLSQLCon
 
   }
 
-  "auth directQuery" should "[directQuery] work fine" in {
+  
+  "when table is valirable" should "still work in MLSQL auth" in {
     withBatchContext(setupBatchContext(batchParams, "classpath:///test/empty.json")) { implicit runtime: SparkRuntime =>
       //执行sql
       implicit val spark = runtime.sparkSession
 
       val mlsql =
         """
-          |connect jdbc where
-          |driver="com.mysql.jdbc.Driver"
-          |and url="jdbc:mysql://${mysql_pi_search_ip}:${mysql_pi_search_port}/white_db?${MYSQL_URL_PARAMS}"
-          |and user="${mysql_pi_search_user}"
-          |and password="${mysql_pi_search_password}"
-          |as white_db_ref;
+          |set load_path = "test/t1";
+          |set tmp_table = "tt4";
+          |set tmp_table_1 = "tt4_1";
+          |set savePath = "download/123.csv";
           |
-          |load jdbc.`white_db_ref.people` where directQuery='''
-          | select * from jack
-          |'''
-          |as people;
+          |load csv.`${load_path}` options owner = "zhuml" and header="true" and delimiter="," as `${tmp_table}`;
+          |
+          |select * from `${tmp_table}` limit 50000 as `${tmp_table_1}`;
         """.stripMargin
       executeScript(mlsql)
-      val loadMLSQLTable = DefaultConsoleClient.get.filter(f => (f.tableType == TableType.JDBC && f.operateType == OperateType.DIRECT_QUERY))
-      assert(loadMLSQLTable.size == 1)
-      assert(loadMLSQLTable.head.table.get == "")
-      assert(loadMLSQLTable.head.db.get == "white_db")
-    }
+      val loadMLSQLTable = DefaultConsoleClient.get.filter(f => (f.tableType == TableType.TEMP && f.operateType == OperateType.LOAD))
+      assert(loadMLSQLTable.head.table.get == "tt4")
 
+    }
+  }
+
+  "auth distinguish select of insert " should "still work in MLSQL auth" in {
+    withBatchContext(setupBatchContext(batchParams, "classpath:///test/empty.json")) { implicit runtime: SparkRuntime =>
+      //执行sql
+      implicit val spark = runtime.sparkSession
+
+      val mlsql =
+        """
+          |insert into a
+          |select * from b;
+        """.stripMargin
+      executeScript(mlsql)
+      val insert = DefaultConsoleClient.get.filter(f => (f.table.get == "a")).head.operateType
+      val select = DefaultConsoleClient.get.filter(f => (f.table.get == "b")).head.operateType
+      assert(insert == OperateType.INSERT)
+      assert(select == OperateType.SELECT)
+    }
+  }
+
+  "auth" should "columns auth should work" in {
+    withBatchContext(setupBatchContext(batchParams, "classpath:///test/empty.json")) { implicit runtime: SparkRuntime =>
+      //执行sql
+      implicit val spark = runtime.sparkSession
+
+      spark.createDataFrame(spark.sparkContext.parallelize(Seq(Row.fromSeq(Seq("a", "b")))), StructType(Seq(
+        StructField("a", StringType),
+        StructField("b", StringType)
+      ))).createOrReplaceTempView("abc")
+
+      spark.createDataFrame(spark.sparkContext.parallelize(Seq(Row.fromSeq(Seq("a", "b")))), StructType(Seq(
+        StructField("k", StringType),
+        StructField("m", StringType)
+      ))).createOrReplaceTempView("test1")
+
+      def sql(sql: String)(f: (mutable.HashMap[String, mutable.HashSet[String]]) => Unit) = {
+        val df = spark.sql(sql)
+
+        val tables = MLSQLDFParser.extractTableWithColumns(df)
+        f(tables)
+      }
+
+      sql(
+        """
+          |select * from (select length(a),a as jack,a,concat(a,a) as k from abc) t LEFT JOIN test1 as tt
+          |ON t.a = tt.k
+        """.stripMargin) { tables =>
+        assert(tables("abc") == Set("a"))
+        assert(tables("test1") == Set("k", "m"))
+      }
+    }
+  }
+
+  "auth compile" should "columns auth should work" in {
+
+      val sql =
+        """
+          |select * from (select length(a),a as jack,a,concat(a,a) as k from abc) t LEFT JOIN test1 as tt
+          |ON t.a = tt.k
+        """.stripMargin
+
+    val tables = MLSQLSQLParser.extractTableWithColumns(JdbcConstants.MYSQL ,sql
+      ,List("create table abc(a varchar ,b varchar)" ,"create table test1(k varchar ,m varchar)"))
+        assert(tables("abc") == Set("a"))
+        assert(tables("test1") == Set("k", "m"))
   }
 }

@@ -205,6 +205,7 @@ class PythonTrain extends Functions with Serializable {
       val modelTrainStartTime = System.currentTimeMillis()
 
       var score = 0.0
+      var message = ""
       var trainFailFlag = false
       val runner = new PythonProjectExecuteRunner(
         taskDirectory = taskDirectory,
@@ -212,7 +213,9 @@ class PythonTrain extends Functions with Serializable {
         envVars = envs,
         logCallback = (msg) => {
           ScriptSQLExec.setContextIfNotPresent(mlsqlContext)
-          logInfo(format(msg))
+          val info = format(msg)
+          logInfo(info)
+          message += (info + "\n")
         }
       )
       try {
@@ -234,13 +237,14 @@ class PythonTrain extends Functions with Serializable {
 
         val scores = res.map { f =>
           logInfo(format(f))
+          message += f
           filterScore(f)
         }.toSeq
         score = if (scores.size > 0) scores.head else 0d
       } catch {
         case e: Exception =>
-          logError(format_cause(e))
-          e.printStackTrace()
+          message += format_cause(e)
+          logError(message)
           trainFailFlag = true
       }
 
@@ -280,13 +284,16 @@ class PythonTrain extends Functions with Serializable {
           FileUtils.deleteQuietly(new File(tempDataLocalPathWithAlgSuffix))
         }
       }
+      val metrics = Seq(Row.fromSeq(Seq("validateScore", score)))
       val status = if (trainFailFlag) "fail" else "success"
       val row = Row.fromSeq(Seq(
         modelHDFSPath,
         algIndex,
         pythonProject.get.fileName,
         score,
+        metrics,
         status,
+        message,
         modelTrainStartTime,
         modelTrainEndTime,
         fitParam,
@@ -459,6 +466,7 @@ class PythonTrain extends Functions with Serializable {
       val modelTrainStartTime = System.currentTimeMillis()
 
       var score = 0.0
+      var message = ""
       var trainFailFlag = false
       val runner = new PythonProjectExecuteRunner(
         taskDirectory = taskDirectory,
@@ -466,7 +474,9 @@ class PythonTrain extends Functions with Serializable {
         envVars = envs,
         logCallback = (msg) => {
           ScriptSQLExec.setContextIfNotPresent(mlsqlContext)
-          logInfo(format(msg))
+          val info = format(msg)
+          logInfo(info)
+          message += (info + "\n")
         }
       )
       try {
@@ -488,13 +498,14 @@ class PythonTrain extends Functions with Serializable {
 
         val scores = res.map { f =>
           logInfo(format(f))
+          message += f
           filterScore(f)
         }.toSeq
         score = if (scores.size > 0) scores.head else 0d
       } catch {
         case e: Exception =>
-          logError(format_cause(e))
-          e.printStackTrace()
+          message += format_cause(e)
+          logError(message)
           trainFailFlag = true
       }
 
@@ -519,23 +530,28 @@ class PythonTrain extends Functions with Serializable {
           trainFailFlag = true
       } finally {
         // delete local model
-        FileUtils.forceDelete(new File(tempModelLocalPath))
+        FileUtils.deleteQuietly(new File(tempModelLocalPath))
         // delete local data
         if (!keepLocalDirectory) {
-          FileUtils.forceDelete(new File(tempDataLocalPathWithAlgSuffix))
+          FileUtils.deleteQuietly(new File(tempDataLocalPathWithAlgSuffix))
         }
         // delete resource
         resourceParams.foreach { rp =>
-          FileUtils.forceDelete(new File(rp._2))
+          FileUtils.deleteQuietly(new File(rp._2))
         }
       }
       val status = if (trainFailFlag) "fail" else "success"
+
+      val metrics = Seq(Row.fromSeq(Seq("validateScore", score)))
+
       Row.fromSeq(Seq(
         modelHDFSPath,
         algIndex,
         pythonProject.get.fileName,
         score,
+        metrics,
         status,
+        message,
         modelTrainStartTime,
         modelTrainEndTime,
         f,
@@ -543,7 +559,9 @@ class PythonTrain extends Functions with Serializable {
       ))
     }
 
-    df.sparkSession.createDataFrame(wowRDD, PythonTrainingResultSchema.algSchema).write.mode(SaveMode.Overwrite).parquet(SQLPythonFunc.getAlgMetalPath(path, keepVersion) + "/0")
+    df.sparkSession.createDataFrame(wowRDD, PythonTrainingResultSchema.algSchema).write.
+      mode(SaveMode.Overwrite).
+      parquet(SQLPythonFunc.getAlgMetalPath(path, keepVersion) + "/0")
 
     val tempRDD = df.sparkSession.sparkContext.parallelize(Seq(Seq(
       Map(

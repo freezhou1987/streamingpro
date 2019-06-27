@@ -15,7 +15,6 @@ abstract class MLSQLBaseStreamSource extends MLSQLSource with MLSQLSink with MLS
     config
   }
 
-
   override def save(batchWriter: DataFrameWriter[Row], config: DataSinkConfig): Any = {
     val oldDF = config.df.get
     var option = config.config
@@ -24,13 +23,21 @@ abstract class MLSQLBaseStreamSource extends MLSQLSource with MLSQLSink with MLS
     }
 
     val writer: DataStreamWriter[Row] = oldDF.writeStream
-    var path = config.path
 
-    val Array(db, table) = parseRef(aliasFormat, path, (options: Map[String, String]) => {
+    val context = ScriptSQLExec.contextGetOrForTest()
+    val owner = config.config.get("owner").getOrElse(context.owner)
+    var path = resolvePath(config.path, owner)
+
+    var pathIsDBAndTable = false
+    val Array(db, table) = parseRef(aliasFormat, path, dbSplitter, (options: Map[String, String]) => {
       writer.options(options)
+      pathIsDBAndTable = true
     })
 
-    path = table
+    if (pathIsDBAndTable) {
+      path = table
+    }
+
 
     require(option.contains("checkpointLocation"), "checkpointLocation is required")
     require(option.contains("duration"), "duration is required")
@@ -53,7 +60,16 @@ abstract class MLSQLBaseStreamSource extends MLSQLSource with MLSQLSink with MLS
 
     val format = config.config.getOrElse("implClass", fullFormat)
 
-    writer.format(format).outputMode(mode).options(option)
+    //make sure the checkpointLocation is append PREFIX
+    def rewriteOption = {
+      val ckPath = option("checkpointLocation")
+      option ++ Map("checkpointLocation" -> resourceRealPath(context.execListener, Option(context.owner), ckPath))
+    }
+
+    if (!skipFormat) {
+      writer.format(format)
+    }
+    writer.outputMode(mode).options(rewriteOption)
 
     val dbtable = if (option.contains("dbtable")) option("dbtable") else path
 
@@ -61,17 +77,32 @@ abstract class MLSQLBaseStreamSource extends MLSQLSource with MLSQLSink with MLS
       writer.option("path", dbtable)
     }
 
-    ScriptSQLExec.contextGetOrForTest().execListener.env().get("streamName") match {
+    context.execListener.env().get("streamName") match {
       case Some(name) => writer.queryName(name)
       case None =>
     }
+
+    foreachBatchCallback(writer, option)
+
     writer.trigger(Trigger.ProcessingTime(duration, TimeUnit.SECONDS)).start()
+  }
+
+  def foreachBatchCallback(dataStreamWriter: DataStreamWriter[Row], options: Map[String, String]): Unit = {
+    //do nothing by default
+  }
+
+  def skipFormat: Boolean = {
+    false
   }
 
 
   override def register(): Unit = {
     DataSourceRegistry.register(MLSQLDataSourceKey(fullFormat, MLSQLSparkDataSourceType), this)
     DataSourceRegistry.register(MLSQLDataSourceKey(shortFormat, MLSQLSparkDataSourceType), this)
+  }
+
+  def resolvePath(path: String, owner: String) = {
+    path
   }
 
   override def sourceInfo(config: DataAuthConfig): SourceInfo = {

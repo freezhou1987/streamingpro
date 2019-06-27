@@ -23,6 +23,7 @@ import java.util.ArrayList
 import org.apache.spark.ml.linalg.{Matrices, Matrix, Vector}
 import org.apache.spark.ps.cluster.Message
 import org.apache.spark.sql.expressions.UserDefinedFunction
+import org.apache.spark.sql.mlsql.session.MLSQLException
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import streaming.common.HDFSOperator
 import streaming.core.strategy.platform.{PlatformManager, SparkRuntime}
@@ -30,6 +31,7 @@ import streaming.dsl.mmlib._
 import streaming.dsl.mmlib.algs.param.{BaseParams, SQLPythonAlgParams}
 import streaming.dsl.mmlib.algs.python._
 import streaming.log.{Logging, WowLog}
+import tech.mlsql.ets.alg.BaseAlg
 
 import scala.collection.JavaConverters._
 
@@ -38,7 +40,7 @@ import scala.collection.JavaConverters._
   * Created by allwefantasy on 5/2/2018.
   * This Module support training or predicting with user-defined python script
   */
-class SQLPythonAlg(override val uid: String) extends SQLAlg with Functions with SQLPythonAlgParams {
+class SQLPythonAlg(override val uid: String) extends SQLAlg with Functions with SQLPythonAlgParams with BaseAlg {
 
   def this() = this(BaseParams.randomUID())
 
@@ -47,17 +49,26 @@ class SQLPythonAlg(override val uid: String) extends SQLAlg with Functions with 
     autoConfigureAutoCreateProjectParams(params)
     var newParams = params
     if (get(scripts).isDefined) {
-      val autoCreateMLproject = new AutoCreateMLproject($(scripts), $(condaFile), $(entryPoint))
+      val autoCreateMLproject = new AutoCreateMLproject($(scripts), $(condaFile), $(entryPoint), $(batchPredictEntryPoint), $(apiPredictEntryPoint))
       val projectPath = autoCreateMLproject.saveProject(df.sparkSession, path)
+
       newParams = params
       newParams += ("enableDataLocal" -> "true")
       newParams += ("pythonScriptPath" -> projectPath)
       newParams += ("pythonDescPath" -> projectPath)
     }
-    new PythonTrain().train(df, path, newParams)
+    if (!params.contains("generateProjectOnly") || !params("generateProjectOnly").toBoolean) {
+      new PythonTrain().train(df, path, newParams)
+    } else {
+      emptyDataFrame(df.sparkSession, "value")
+    }
+
   }
 
   override def load(sparkSession: SparkSession, _path: String, params: Map[String, String]): Any = {
+
+    if (!isModelPath(_path)) throw new MLSQLException(s"${_path} is not a validate model path")
+
     new PythonLoad().load(sparkSession, _path, params)
   }
 
@@ -67,6 +78,7 @@ class SQLPythonAlg(override val uid: String) extends SQLAlg with Functions with 
 
 
   override def batchPredict(df: DataFrame, _path: String, params: Map[String, String]): DataFrame = {
+    if (!isModelPath(_path)) throw new MLSQLException(s"${_path} is not a validate model path")
     val bp = new BatchPredict()
     bp.predict(df, _path, params)
   }

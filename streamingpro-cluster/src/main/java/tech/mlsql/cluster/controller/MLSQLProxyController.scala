@@ -80,14 +80,17 @@ class MLSQLProxyController extends ApplicationController {
       instance.runScript(params().asScala.toMap)
     }, tags, proxyStrategy)
     renderResult(tags, res)
-  }
+  } 
 
   def renderResult(tags: String, res: Seq[Option[SResponse]]) = {
     if (res.size == 0) {
-      render(500, map("msg", s"There are no backend with tags [${tags}]"))
+      render(500, map("msg", s"There are no backend with tags [${tags}] found."))
     }
 
     if (res.size == 1) {
+      if (!res(0).isDefined) {
+        render(500,"""{"msg":"No response from backend. Make sure all engines configured properly"}""")
+      }
       if (res(0).get.getStatus == 200) {
         res(0).get.jsonStr match {
           case Some(i) => render(i)

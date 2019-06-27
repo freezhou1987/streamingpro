@@ -1,13 +1,15 @@
 package streaming.core.datasource.impl
 
+import org.apache.spark.sql.mlsql.session.MLSQLException
 import org.apache.spark.sql.{DataFrame, DataFrameReader}
-import streaming.common.ScalaEnumTool
-import streaming.core.StreamingproJobInfo
 import streaming.core.datasource._
 import streaming.core.datasource.util.MLSQLJobCollect
 import streaming.dsl.ScriptSQLExec
 import streaming.dsl.auth.{OperateType, TableType}
-import streaming.dsl.load.batch.{MLSQLAPIExplain, MLSQLConfExplain}
+import streaming.dsl.load.batch.{LogTail, MLSQLAPIExplain, MLSQLConfExplain}
+import tech.mlsql.MLSQLEnvKey
+import tech.mlsql.core.version.MLSQLVersion
+import tech.mlsql.job.MLSQLJobInfo
 
 /**
   * 2019-01-11 WilliamZhu(allwefantasy@gmail.com)
@@ -15,12 +17,17 @@ import streaming.dsl.load.batch.{MLSQLAPIExplain, MLSQLConfExplain}
 class MLSQLSystemTables extends MLSQLSource with MLSQLSourceInfo with MLSQLRegistry {
 
   override def load(reader: DataFrameReader, config: DataSourceConfig): DataFrame = {
-    val owner = ScriptSQLExec.contextGetOrForTest().owner
+    val context = ScriptSQLExec.contextGetOrForTest();
+    val owner = context.owner
+    context.execListener.addEnv(MLSQLEnvKey.CONTEXT_SYSTEM_TABLE, "true")
     val spark = config.df.get.sparkSession
     import spark.implicits._
 
     val jobCollect = new MLSQLJobCollect(spark, owner)
-    config.path.split("/") match {
+
+    val pathSplitter = "/"
+
+    config.path.stripPrefix(pathSplitter).stripSuffix(pathSplitter).split(pathSplitter) match {
       case Array("datasources") => {
         spark.createDataset(DataSourceRegistry.allSourceNames.toSet.toSeq ++ Seq(
           "parquet", "csv", "jsonStr", "csvStr", "json", "text", "orc", "kafka", "kafka8", "kafka9", "crawlersql", "image",
@@ -35,9 +42,11 @@ class MLSQLSystemTables extends MLSQLSource with MLSQLSourceInfo with MLSQLRegis
 
       }
       case Array("jobs") =>
-        spark.createDataset[StreamingproJobInfo](jobCollect.jobs).toDF()
+        spark.createDataset[MLSQLJobInfo](jobCollect.jobs).toDF()
       case Array("jobs", jobGroupId) =>
         spark.createDataset(Seq(jobCollect.jobDetail(jobGroupId))).toDF()
+      case Array("jobs", "get", jobGroupId) =>
+        spark.createDataset[MLSQLJobInfo](jobCollect.getJob(jobGroupId)).toDF()
       case Array("progress", jobGroupId) =>
         spark.createDataset(jobCollect.jobProgress(jobGroupId)).toDF()
       case Array("resource") =>
@@ -51,15 +60,28 @@ class MLSQLSystemTables extends MLSQLSource with MLSQLSourceInfo with MLSQLRegis
         spark.createDataset(TableType.toList).toDF()
 
       case Array("tables", "sourceTypes") =>
-        spark.createDataset(SourceTypeRegistry.sources).toDF()
+        spark.createDataset(SourceTypeRegistry.sources ++ Seq("mysql")).toDF()
 
       case Array("tables", "operateTypes") =>
-        val res = ScalaEnumTool.valueSymbols[OperateType.type].map(f => f.toString.split("\\s+").last.toLowerCase()).toSeq
+        val res = OperateType.toList
         spark.createDataset(res).toDF()
       case Array("api", "list") =>
         new MLSQLAPIExplain(spark).explain
       case Array("conf", "list") =>
         new MLSQLConfExplain(spark).explain
+      case Array("log", offset) =>
+        val filePath = config.config.getOrElse("filePath", "")
+        val msgs = LogTail.log(owner, filePath, offset.toLong)
+        spark.createDataset(Seq(msgs)).toDF("offset", "value")
+      case Array("version") =>
+        spark.createDataset(Seq(MLSQLVersion.version())).toDF()
+      case _ => throw new MLSQLException(
+        s"""
+           |path [${config.path}] is not found. please check the doc website for more details:
+           |http://docs.mlsql.tech/zh
+           |or
+           |http://docs.mlsql.tech/en
+         """.stripMargin)
     }
 
   }

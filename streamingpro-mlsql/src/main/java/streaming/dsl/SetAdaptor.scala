@@ -21,11 +21,12 @@ package streaming.dsl
 import _root_.streaming.dsl.parser.DSLSQLParser._
 import streaming.common.ShellCommand
 import streaming.dsl.template.TemplateMerge
+import tech.mlsql.Stage
 
 /**
   * Created by allwefantasy on 27/8/2017.
   */
-class SetAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdaptor {
+class SetAdaptor(scriptSQLExecListener: ScriptSQLExecListener, stage: Stage.stage = Stage.physical) extends DslAdaptor {
   override def parse(ctx: SqlContext): Unit = {
     var key = ""
     var value = ""
@@ -59,14 +60,38 @@ class SetAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdapto
       TemplateMerge.merge(str, scriptSQLExecListener.env().toMap)
     }
 
+    def doRealJob(command: String): String = {
+      val df = scriptSQLExecListener.sparkSession.sql(evaluate(command))
+
+      new SelectAdaptor(scriptSQLExecListener).runtimeTableAuth(df)
+
+      val resultHead = df.collect().headOption
+      if (resultHead.isDefined) {
+        resultHead.get.get(0).toString
+      } else {
+        ""
+      }
+    }
+
     var overwrite = true
     option.get("type") match {
       case Some("sql") =>
-
-        val resultHead = scriptSQLExecListener.sparkSession.sql(evaluate(command)).collect().headOption
-        if (resultHead.isDefined) {
-          value = resultHead.get.get(0).toString
+        // If we set mode compile, and then we should avoid the sql executed in
+        // both preProcess and physical stage.
+        val mode = SetMode.withName(option.get(SetMode.keyName).getOrElse(SetMode.runtime.toString))
+        if (mode == SetMode.compile && stage == Stage.preProcess) {
+          value = doRealJob(command)
         }
+        if (mode == SetMode.runtime && stage == Stage.physical) {
+          value = doRealJob(command)
+        }
+        // When the mode is compile, we should set  overwrite to false
+        // to make sure the value (empty) will not overwrite the value computed
+        // in stage preProcess
+        if (mode == SetMode.compile && stage == Stage.physical) {
+          overwrite = false
+        }
+
       case Some("shell") =>
         value = ShellCommand.execSimpleCommand(evaluate(command)).trim
       case Some("conf") =>
@@ -81,6 +106,7 @@ class SetAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdapto
         }
       case Some("defaultParam") =>
         overwrite = false
+        value = cleanBlockStr(cleanStr(command))
       case _ =>
         value = cleanBlockStr(cleanStr(command))
     }
@@ -102,6 +128,14 @@ class SetAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdapto
     }
 
     scriptSQLExecListener.setLastSelectTable(null)
-    //scriptSQLExecListener.sparkSession.sql(ctx.)
   }
+}
+
+object SetMode extends Enumeration {
+  type mode = Value
+  val compile = Value("compile")
+  val runtime = Value("runtime")
+
+  def keyName = "mode"
+
 }

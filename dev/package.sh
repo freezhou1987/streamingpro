@@ -27,6 +27,7 @@ cd $SELF
 cd ..
 
 MLSQL_SPARK_VERSION=${MLSQL_SPARK_VERSION:-2.3}
+SCALA_VERSION=${SCALA_VERSION:-2.11}
 DRY_RUN=${DRY_RUN:-false}
 DISTRIBUTION=${DISTRIBUTION:-false}
 OSS_ENABLE=${OSS_ENABLE:-false}
@@ -41,12 +42,40 @@ for env in MLSQL_SPARK_VERSION DRY_RUN DISTRIBUTION; do
   fi
 done
 
-BASE_PROFILES="-Pscala-2.11 -Ponline -Phive-thrift-server -Pcarbondata  -Pcrawler"
+# before we compile and package, correct the version in MLSQLVersion
+#---------------------
+
+unameOut="$(uname -s)"
+case "${unameOut}" in
+    Linux*)     machine=Linux;;
+    Darwin*)    machine=Mac;;
+    CYGWIN*)    machine=Cygwin;;
+    MINGW*)     machine=MinGw;;
+    *)          machine="UNKNOWN:${unameOut}"
+esac
+echo ${machine}
+
+current_version=$(cat pom.xml|grep -e '<version>.*</version>' | head -n 1 | tail -n 1 | cut -d'>' -f2 | cut -d '<' -f1)
+MLSQL_VERSION_FILE="./streamingpro-mlsql/src/main/java/tech/mlsql/core/version/MLSQLVersion.scala"
+
+if [[ "${machine}" == "Linux" ]]
+then
+    sed -i "s/MLSQL_VERSION_PLACEHOLDER/${current_version}/" ${MLSQL_VERSION_FILE}
+elif [[ "${machine}" == "Mac" ]]
+then
+    sed -i '' "s/MLSQL_VERSION_PLACEHOLDER/${current_version}/" ${MLSQL_VERSION_FILE}
+else
+ echo "Windows  is not supported yet"
+ exit 0
+fi
+#---------------------
+
+BASE_PROFILES="-Pscala-${SCALA_VERSION} -Ponline -Phive-thrift-server -Pcrawler"
 
 if [[ "$MLSQL_SPARK_VERSION" > "2.2" ]]; then
-  BASE_PROFILES="$BASE_PROFILES -Pdsl -Pxgboost"
+  BASE_PROFILES="$BASE_PROFILES  -Pxgboost"
 else
-  BASE_PROFILES="$BASE_PROFILES -Pdsl-legacy"
+  BASE_PROFILES="$BASE_PROFILES"
 fi
 
 BASE_PROFILES="$BASE_PROFILES -Pspark-$MLSQL_SPARK_VERSION.0 -Pstreamingpro-spark-$MLSQL_SPARK_VERSION.0-adaptor"

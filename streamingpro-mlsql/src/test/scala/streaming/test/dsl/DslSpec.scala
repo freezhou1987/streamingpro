@@ -20,12 +20,14 @@ package streaming.test.dsl
 
 import java.io.File
 
+import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.streaming.BasicSparkOperation
+import streaming.common.PathFun
 import streaming.common.shell.ShellCommand
 import streaming.core.strategy.platform.SparkRuntime
 import streaming.core.{BasicMLSQLConfig, NotToRunTag, SpecFunctions}
-import streaming.dsl.auth.{OperateType, TableType}
-import streaming.dsl.{GrammarProcessListener, ScriptSQLExec}
+import streaming.dsl.{ScriptSQLExec, ScriptSQLExecListener}
+import tech.mlsql.dsl.processor.GrammarProcessListener
 
 /**
   * Created by allwefantasy on 26/4/2018.
@@ -530,14 +532,6 @@ class DslSpec extends BasicSparkOperation with SpecFunctions with BasicMLSQLConf
       spark.sql("select * from output").show()
       ScriptSQLExec.parse("""load model.`example` where alg="RandomForest" as output;""", ssel)
       spark.sql("select * from output").show()
-
-      ScriptSQLExec.parse("load workflow.`list` as output;", ssel)
-      spark.sql("select * from output").show()
-      ScriptSQLExec.parse("load workflow.`` as output;", ssel)
-      spark.sql("select * from output").show()
-
-      ScriptSQLExec.parse("load workflow.`types` as output;", ssel)
-      spark.sql("select * from output").show()
     }
   }
 
@@ -606,6 +600,142 @@ class DslSpec extends BasicSparkOperation with SpecFunctions with BasicMLSQLConf
         spark.sql("select * from output").show()
 
     }
+  }
+
+  "Command" should "alias commnd work fine" in {
+
+    withBatchContext(setupBatchContext(batchParams, "classpath:///test/empty.json")) {
+      implicit runtime: SparkRuntime =>
+        implicit val spark = runtime.sparkSession
+
+        def compareDSL(command: String, targetStr: String) = {
+          val ssel = createSSEL
+          executeScript(
+            s"""
+               |set kill=''' run command as Kill.`{}` ''';
+               |set jobId="wow";
+               |
+              |${command};
+            """.stripMargin, ssel)
+          println(ssel.preProcessListener.get.toScript)
+          assert(ssel.preProcessListener.get.toScript == targetStr)
+        }
+
+        compareDSL("""!kill "jobId"""","""set kill=''' run command as Kill.`{}` ''';set jobId="wow"; run command as Kill.`jobId` ;""")
+
+        compareDSL("""!kill jobId;""","""set kill=''' run command as Kill.`{}` ''';set jobId="wow"; run command as Kill.`jobId` ;""")
+
+        compareDSL("""!kill '''jobId"'''""","""set kill=''' run command as Kill.`{}` ''';set jobId="wow"; run command as Kill.`jobId"` ;""")
+        compareDSL("""!kill '''${jobId}'''""","""set kill=''' run command as Kill.`{}` ''';set jobId="wow"; run command as Kill.`wow` ;""")
+
+        val ssel = createSSEL
+        executeScript(
+          s"""
+             |!show;
+            """.stripMargin, ssel)
+        ssel.preProcessListener.get.toScript should not include ("{}")
+
+
+    }
+  }
+
+
+  "Command" should "alias expand work fine" in {
+
+    withBatchContext(setupBatchContext(batchParams, "classpath:///test/empty.json")) {
+      implicit runtime: SparkRuntime =>
+        implicit val spark = runtime.sparkSession
+
+        def compareDSL(command: String, targetStr: String) = {
+          val ssel = createSSEL
+          executeScript(command, ssel)
+          println(ssel.preProcessListener.get.toScript)
+          assert(ssel.preProcessListener.get.toScript contains targetStr)
+        }
+
+        compareDSL(
+          """
+            |set vtest = '''
+            |run command VTest.`{}` where name="{}"
+            |''';
+            |!vtest wow jack;
+          """.stripMargin, "run command VTest.`wow` where name=\"jack\"")
+
+        compareDSL(
+          """
+            |set vtest = '''
+            |run command VTest.`{}` where name="{}"{}
+            |''';
+            |!vtest wow jack;
+          """.stripMargin, "run command VTest.`wow` where name=\"jack\"")
+
+        compareDSL(
+          """
+            |set vtest = '''
+            |run command VTest.`{1}` where name="{0}"
+            |''';
+            |!vtest wow jack;
+          """.stripMargin, "run command VTest.`jack` where name=\"wow\"")
+
+        compareDSL(
+          """
+            |set vtest = '''
+            |run command VTest.`{}` where name="{}"
+            |''';
+            |!vtest;
+          """.stripMargin, "run command VTest.`` where name=\"\"")
+
+        compareDSL(
+          """
+            |set vtest = '''
+            |run command VTest.`{}` where {1} name="{}"
+            |''';
+            |!vtest wow jack;
+          """.stripMargin, "run command VTest.`wow` where jack name=\"jack\"")
+
+    }
+  }
+
+  "mlsql" should "valiate before really executed" in {
+    withBatchContext(setupBatchContext(batchParams, "classpath:///test/empty.json")) {
+      implicit runtime: SparkRuntime =>
+
+        assertThrows[ParseException] { // Result type: Assertion
+          executeScriptWithValidate(
+            """
+              |select a as b from table1 c m  as jack;
+            """.stripMargin)
+        }
+
+        val res = executeScriptWithValidate(
+          """
+            |select a as b from table1 as jack;
+          """.stripMargin)
+        assert(res != null)
+    }
+  }
+
+  "path join " should "work fine" in {
+    assert("/jack/ow/ab/no.md" == PathFun.joinPath("/jack", "ow", "", "/ab/", "no.md"))
+    assert("/jack/ow/ab/no.md" == (PathFun("/jack") / "ow" / "" / "/ab/" / "no.md").toPath)
+  }
+
+  def executeScriptWithValidate(script: String)(implicit runtime: SparkRuntime) = {
+    implicit val spark = runtime.sparkSession
+    val ssel = createSSEL
+    ScriptSQLExec.parse(script, ssel, false, true, true, skipGrammarValidate = false)
+    ssel
+  }
+
+  def executeScript(script: String)(implicit runtime: SparkRuntime) = {
+    implicit val spark = runtime.sparkSession
+    val ssel = createSSEL
+    ScriptSQLExec.parse(script, ssel, false, true, true)
+  }
+
+  def executeScript(script: String, ssel: ScriptSQLExecListener)(implicit runtime: SparkRuntime) = {
+    implicit val spark = runtime.sparkSession
+    ScriptSQLExec.parse(script, ssel, false, true, true)
   }
 
 }

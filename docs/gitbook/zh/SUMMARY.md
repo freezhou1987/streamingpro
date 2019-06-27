@@ -22,18 +22,19 @@
 ## TABLE OF CONTENTS
 
 * 概要
-    * [MSLQL简介](getting_started/README.md)
-        * [MSLQL-Engine](getting_started/mlsql-engine.md)
+    * [MSLQL简介](getting_started/READEME.md)
+        * [MLSQL-Engine](getting_started/mlsql-engine.md)
         * [MLSQL-Cluster](getting_started/mlsql-cluster.md)
         * [MLSQL-Console](getting_started/mlsql-console.md)
 
 * 用户指南
     * [编译&运行&部署](installation/README.md)
         * [自助编译](installation/compile.md)
-        * [使用Docker](installation/docker.md)   
+        * [一键体验MLSQL套件](installation/docker.md)   
         * [如何运行](installation/run.md)
         * [启动参数说明](installation/startup-configuration.md)
-        * [使用docker快速体验](installation/docker-fast.md)
+        * [使用docker快速体验MLSQL-Engine](installation/docker-fast.md)
+        * [MLSQL IDE开发环境配置](installation/ide.md)
         
     * [数据源](datasource/README.md)      
         * [JDBC](datasource/jdbc.md)
@@ -66,14 +67,15 @@
     * [任务/资源管理](jobs/README.md)
         * [查看正在任务列表](jobs/list_jobs.md)
         * [取消正在运行任务](jobs/cancel_job.md)
+        * [动态添加/删除资源](jobs/dynamic_resource.md)
     
     * [多租户](multi_tenement/README.md)
         * [多租户相关参数](multi_tenement/conf.md)
-        * [租户主目录设置](multi_tenement/home.md)        
+        * [租户主目录设置](multi_tenement/home.md)
+        * [租户主目录查看与管理](multi_tenement/home_fs.md)        
     
     * [创建UDF/UDAF](udf/README.md)
-        * [Python UDF](udf/python_udf.md)
-        * [Python UDAF](udf/python_udaf.md)
+        * [Python UDF](udf/python_udf.md)       
         * [Scala UDF](udf/scala_udf.md)
         * [Scala UDAF](udf/scala_udaf.md)
         * [Java UDF](udf/java_udf.md)
@@ -94,6 +96,7 @@
         * [如何统一管理scala/python udf脚本](include/include_script.md)        
         * [如何统一管理中间表](include/table.md)
         * [如何开启include功能](include/enable.md)
+        * [定义自己的命令](include/commands.md)
         
     * [流式计算](stream/README.md)        
         * [数据源](stream/datasource.md)           
@@ -141,6 +144,7 @@
         * [基于MLSQL爬虫系统的设计]()
     
     * [保障数据安全](security/README.md)
+        * [MLSQL 编译时权限控制](security/compile-auth.md)
         * [MLSQL统一授权体系设计原理](security/design.md)
         * [如何开发自定义授权规则](security/build.md)
         * [如何管理connect账号和密码](security/user_password.md)
@@ -152,11 +156,15 @@
     * [如何执行初始化脚本](application/README.md)            
         
     * [管理多个MLSQL实例](cluster/README.md)
+        * [MLSQL Cluster 路由策略](cluster/route.md)    
+    
     * [常见问题集锦](qa/README.md)        
         
 
 * 开发者指南
-    * [MLSQL-ET开发指南](develop/et.md)   
+    * [MLSQL-ET开发指南](develop/et.md) 
+    * [MLSQL数据源开发指南](develop/datasource.md)
+    * [Ambari HDP Spark多版本兼容](develop/ambari_multi_spark.md)
     * [如何参与开发]()
     * [开发者列表]() 
 

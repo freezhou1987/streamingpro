@@ -1,10 +1,10 @@
 package streaming.core.datasource.impl
 
 import org.apache.spark.ml.param.Param
-import org.apache.spark.sql.{DataFrame, DataFrameReader, DataFrameWriter, Row}
-import streaming.core.datasource.{DataSinkConfig, DataSourceConfig, MLSQLBaseStreamSource}
-import streaming.dsl.ScriptSQLExec
-import streaming.dsl.mmlib.algs.param.{BaseParams, WowParams}
+import org.apache.spark.sql._
+import _root_.streaming.core.datasource.{DataSinkConfig, DataSourceConfig, MLSQLBaseStreamSource}
+import _root_.streaming.dsl.ScriptSQLExec
+import _root_.streaming.dsl.mmlib.algs.param.{BaseParams, WowParams}
 
 /**
   * 2019-03-20 WilliamZhu(allwefantasy@gmail.com)
@@ -15,19 +15,24 @@ class MLSQLKafka(override val uid: String) extends MLSQLBaseStreamSource with Wo
 
   override def load(reader: DataFrameReader, config: DataSourceConfig): DataFrame = {
 
-    def getSubscribe = {
-      if (shortFormat == "kafka8" || shortFormat == "kafka9") {
-        "topics"
-      } else "subscribe"
-    }
+    if (isStream) {
+      // ignore the reader since this reader is not stream reader
+      val streamReader = config.df.get.sparkSession.readStream
+      val format = config.config.getOrElse("implClass", fullFormat)
+      streamReader.options(rewriteKafkaConfig(config.config, getSubscribe, getLoadUrl, config.path)).format(format).
+        load()
 
-    // ignore the reader since this reader is not stream reader
-    val streamReader = config.df.get.sparkSession.readStream
-    val format = config.config.getOrElse("implClass", fullFormat)
-    if (!config.path.isEmpty) {
-      streamReader.option(getSubscribe, config.path)
+    } else {
+      val format = config.config.getOrElse("implClass", fullFormat)
+      reader.options(rewriteKafkaConfig(config.config, getSubscribe, getLoadUrl, config.path)).format(format).
+        load()
     }
-    streamReader.options(rewriteConfig(config.config)).format(format).load()
+  }
+
+  def getSubscribe = {
+    if (shortFormat == "kafka8" || shortFormat == "kafka9") {
+      "topics"
+    } else "subscribe"
   }
 
   def isStream = {
@@ -36,25 +41,44 @@ class MLSQLKafka(override val uid: String) extends MLSQLBaseStreamSource with Wo
   }
 
 
+  def getLoadUrl = {
+    "kafka.bootstrap.servers"
+  }
+
+  def getSaveUrl = {
+    if (shortFormat == "kafka8" || shortFormat == "kafka9") {
+      "metadata.broker.list"
+    } else "kafka.bootstrap.servers"
+  }
+
+  def getKafkaBrokers(config: Map[String, String], url: String) = {
+    url -> config.getOrElse("metadata.broker.list", config.get("kafka.bootstrap.servers").get)
+  }
+
+  def getWriteTopic = {
+    if (shortFormat == "kafka8" || shortFormat == "kafka9") {
+      "topics"
+    } else "topic"
+  }
+
+
+  def rewriteKafkaConfig(config: Map[String, String], topicKey: String, url: String, path: String): Map[String, String] = {
+    var temp = ((config - "metadata.broker.list" - "kafka.bootstrap.servers") ++ Map(
+      getKafkaBrokers(config, url)
+    ))
+    if (path != null && !path.isEmpty) {
+      temp = temp ++ Map(topicKey -> path)
+    }
+    temp
+  }
+
   override def save(batchWriter: DataFrameWriter[Row], config: DataSinkConfig): Any = {
 
     if (isStream) {
-      return super.save(batchWriter, config)
+      return super.save(batchWriter, config.copy(config = rewriteKafkaConfig(config.config, getWriteTopic, getSaveUrl, config.path)))
 
     }
-
-    def getKafkaBrokers = {
-      "metadata.broker.list" -> config.config.getOrElse("metadata.broker.list", "kafka.bootstrap.servers")
-    }
-
-    def getWriteTopic = {
-      if (shortFormat == "kafka8" || shortFormat == "kafka9") {
-        "topics"
-      } else "topic"
-    }
-
-    batchWriter.options(config.config).option(getWriteTopic, config.path).
-      option(getKafkaBrokers._1, getKafkaBrokers._2).format(fullFormat).save()
+    batchWriter.options(rewriteKafkaConfig(config.config, getWriteTopic, getSaveUrl, config.path)).format(fullFormat).save()
 
   }
 

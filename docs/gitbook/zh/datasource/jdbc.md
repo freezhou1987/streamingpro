@@ -52,6 +52,26 @@ select * from table1 as output;
 其中，partitionColumn, lowerBound, upperBound,numPartitions 用来控制加载表的并行度。如果你
 加载数据太慢，那么可以调整着几个参数。
 
+MLSQL内置参数：
+
+| Property Name  |  Meaning |
+|---|---|
+|prePtnArray|Prepartitioned array, default comma delimited|
+|prePtnDelimiter|Prepartition separator|
+
+预分区使用样例：
+
+```
+load jdbc.`db.table` options
+and driver="com.mysql.jdbc.Driver"
+and url="jdbc:mysql://127.0.0.1:3306/...."
+and user="..."
+and password="...."
+and prePtnArray = "age<=10 | age > 10"
+and prePtnDelimiter = "\|"
+as table1;
+```
+
 当然，我们也可以不用connect语法，直接使用Load语法：
 
 ```sql
@@ -73,7 +93,13 @@ select * from test1 where a = "b"
 select * from newtable;
 ```
 
-这种情况要求加载的数据集不能太大。
+这种情况要求加载的数据集不能太大。 如果你希望对这个语句也进行权限控制，如果是到表级别，那么只要系统开启授权即可。
+如果是需要控制到列，那么启动时需要添加如下参数：
+
+```
+--conf "spark.mlsql.enable.runtime.directQuery.auth=true" 
+```
+
 
 ## 保存更新数据
 

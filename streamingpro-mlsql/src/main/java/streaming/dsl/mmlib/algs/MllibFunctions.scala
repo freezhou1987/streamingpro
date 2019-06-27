@@ -18,15 +18,18 @@
 
 package streaming.dsl.mmlib.algs
 
+import org.apache.spark.sql.mlsql.session.MLSQLException
 import org.apache.spark.sql.types.{MapType, StringType, StructField, StructType}
-import org.apache.spark.sql.{DataFrame, Row, SaveMode, SparkSession}
+import org.apache.spark.sql.{DataFrame, Row, SaveMode, SparkSession, functions => F}
 import org.joda.time.DateTime
+import streaming.common.PathFun
 import streaming.log.{Logging, WowLog}
+import tech.mlsql.ets.alg.BaseAlg
 
 /**
   * Created by allwefantasy on 25/7/2018.
   */
-trait MllibFunctions extends Logging with WowLog with Serializable {
+trait MllibFunctions extends BaseAlg with Logging with WowLog with Serializable {
 
   def formatOutput(newDF: DataFrame) = {
     val schema = newDF.schema
@@ -56,7 +59,44 @@ trait MllibFunctions extends Logging with WowLog with Serializable {
     newDF.sparkSession.createDataFrame(newDF.sparkSession.sparkContext.parallelize(rows, 1), newSchema)
   }
 
+  def formatOutputWithMultiColumns(pathPrefix: String, newDF: DataFrame) = {
+
+    val formatMetrics = F.udf((value: Seq[Row]) => {
+      value.map(row => s"${row.getString(0)}:  ${row.getDouble(1)}").mkString("\n")
+    }, StringType)
+
+    val formatDate = F.udf((value: Long) => {
+      new DateTime(value).toString("yyyyMMdd mm:HH:ss:SSS")
+    }, StringType)
+
+    val formatAlg = F.udf((value: String) => {
+      value.split("\\.").last
+    }, StringType)
+
+    val formatPath = F.udf((value: String) => {
+      PathFun(pathPrefix).add(value).toPath
+    }, StringType)
+
+    val formatInfo = F.udf((value: String) => {
+      value
+    }, StringType)
+
+
+    val resDF = newDF.withColumn("metrics", formatMetrics(F.col("metrics"))).
+      withColumn("startTime", formatDate(F.col("startTime"))).
+      withColumn("endTime", formatDate(F.col("endTime"))).
+      withColumn("alg", formatAlg(F.col("alg"))).
+      withColumn("modelPath", formatPath(F.col("modelPath"))).
+      withColumn("message", formatInfo(F.col("message")))
+
+    resDF
+
+  }
+
   def mllibModelAndMetaPath(path: String, params: Map[String, String], sparkSession: SparkSession) = {
+
+    if (!isModelPath(path)) throw new MLSQLException(s"$path is not a validate model path")
+
     val maxVersion = SQLPythonFunc.getModelVersion(path)
     var algIndex = params.get("algIndex").map(f => f.toInt)
 

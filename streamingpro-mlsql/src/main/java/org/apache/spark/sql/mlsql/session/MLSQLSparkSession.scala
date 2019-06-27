@@ -23,6 +23,7 @@ import java.lang.reflect.UndeclaredThrowableException
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
 import streaming.core.strategy.platform.{PlatformManager, SparkRuntime}
+import streaming.core.stream.MLSQLStreamManager
 import streaming.log.Logging
 
 import scala.collection.mutable.{HashSet => MHSet}
@@ -48,22 +49,23 @@ class MLSQLSparkSession(userName: String, conf: Map[String, String]) extends Log
         throw new MLSQLException(s"A partially constructed SparkContext for [$userName] " +
           s"has last more than ${checkRound * interval} seconds")
       }
-      log.info(s"A partially constructed SparkContext for [$userName], $checkRound times countdown.")
+      logInfo(s"A partially constructed SparkContext for [$userName], $checkRound times countdown.")
     }
 
     SparkSessionCacheManager.get.getAndIncrease(userName) match {
       case Some(ss) =>
-        _sparkSession = ss.cloneSession()
+        _sparkSession = ss
       case _ =>
         MLSQLSparkSession.setPartiallyConstructed(userName)
         notifyAll()
         create(sessionConf)
     }
+    MLSQLStreamManager.start(_sparkSession)
   }
 
 
   private[this] def create(sessionConf: Map[String, String]): Unit = {
-    log.info(s"--------- Create new SparkSession for $userName ----------")
+    logInfo(s"--------- Create new SparkSession for $userName ----------")
     try {
       _sparkSession = PlatformManager.getRuntime.asInstanceOf[SparkRuntime].sparkSession.cloneSession()
       SparkSessionCacheManager.get.set(userName, _sparkSession)
@@ -105,6 +107,10 @@ object MLSQLSparkSession extends Logging {
 
   def setFullyConstructed(user: String): Unit = {
     userSparkContextBeingConstruct.remove(user)
+  }
+
+  def cloneSession(session: SparkSession) = {
+    session.cloneSession()
   }
 
 }

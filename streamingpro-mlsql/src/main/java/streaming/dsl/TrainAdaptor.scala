@@ -24,6 +24,9 @@ import org.apache.spark.SparkCoreVersion
 import streaming.dsl.mmlib.SQLAlg
 import streaming.dsl.parser.DSLSQLParser._
 import streaming.dsl.template.TemplateMerge
+import tech.mlsql.dsl.auth.ETAuth
+import tech.mlsql.dsl.auth.dsl.mmlib.ETMethod
+import tech.mlsql.ets.register.ETRegister
 
 /**
   * Created by allwefantasy on 12/1/2018.
@@ -71,12 +74,24 @@ class TrainAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdap
       path = withPathPrefix(scriptSQLExecListener.pathPrefix(owner), path)
     }
 
-    val isTrain = ctx.getChild(0).getText match {
-      case "predict" => false
-      case "run" => true
-      case "train" => true
+    if (!sqlAlg.skipOriginalDFName) {
+      options = options ++ Map("__dfname__" -> tableName)
     }
 
+    val firstKeywordInStatement = ctx.getChild(0).getText
+
+    val isTrain = ETMethod.withName(firstKeywordInStatement) match {
+      case ETMethod.PREDICT => false
+      case ETMethod.RUN => true
+      case ETMethod.TRAIN => true
+    }
+
+    if (!skipAuth() && sqlAlg.isInstanceOf[ETAuth]) {
+      sqlAlg.asInstanceOf[ETAuth].auth(ETMethod.withName(firstKeywordInStatement) ,path , options)
+    }
+
+    // RUN and TRAIN are the same. TRAIN is normally used for algorithm.
+    // RUN is used for other situation.
     val newdf = if (isTrain) {
       sqlAlg.train(df, path, options)
     } else {
@@ -87,10 +102,16 @@ class TrainAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdap
     newdf.createOrReplaceTempView(tempTable)
     scriptSQLExecListener.setLastSelectTable(tempTable)
   }
+
+  def skipAuth(): Boolean = {
+    scriptSQLExecListener.env()
+      .getOrElse("SKIP_AUTH", "true")
+      .toBoolean
+  }
 }
 
 object MLMapping {
-  val mapping = Map[String, String](
+  val mapping = ETRegister.mapping ++ Map[String, String](
     "Word2vec" -> "streaming.dsl.mmlib.algs.SQLWord2Vec",
     "NaiveBayes" -> "streaming.dsl.mmlib.algs.SQLNaiveBayes",
     "RandomForest" -> "streaming.dsl.mmlib.algs.SQLRandomForest",

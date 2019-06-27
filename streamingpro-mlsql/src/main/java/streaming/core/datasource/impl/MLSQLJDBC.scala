@@ -18,6 +18,8 @@
 
 package streaming.core.datasource.impl
 
+import java.util.Properties
+
 import _root_.streaming.common.HDFSOperator
 import _root_.streaming.common.hdfs.lock.DistrLocker
 import _root_.streaming.core.datasource.{SourceTypeRegistry, _}
@@ -27,6 +29,7 @@ import _root_.streaming.log.{Logging, WowLog}
 import org.apache.spark.ml.param.{BooleanParam, LongParam, Param}
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCOptions
+import tech.mlsql.common.ScalaReflect
 
 class MLSQLJDBC(override val uid: String) extends MLSQLSource with MLSQLSink with MLSQLSourceInfo with MLSQLRegistry with WowParams with Logging with WowLog {
   def this() = this(BaseParams.randomUID())
@@ -46,19 +49,28 @@ class MLSQLJDBC(override val uid: String) extends MLSQLSource with MLSQLSink wit
     // otherwize we will do nothing since elasticsearch use something like index/type
     // it will do no harm.
     val format = config.config.getOrElse("implClass", fullFormat)
+    var url = config.config.get("url")
     if (config.path.contains(dbSplitter)) {
       val Array(_dbname, _dbtable) = config.path.split(toSplit, 2)
       ConnectMeta.presentThenCall(DBMappingKey(format, _dbname), options => {
         dbtable = _dbtable
         reader.options(options)
+        url = options.get("url")
       })
     }
     //load configs should overwrite connect configs
     reader.options(config.config)
-    reader.option("dbtable", dbtable)
 
+    val table = if (config.config.contains("prePtnArray")){
+      val prePtn = config.config.get("prePtnArray").get
+        .split(config.config.getOrElse("prePtnDelimiter" ,","))
 
-    var table = reader.format(format).load(dbtable)
+      reader.jdbc(url.get, dbtable, prePtn, new Properties())
+    }else{
+      reader.option("dbtable", dbtable)
+
+      reader.format(format).load()
+    }
 
     val columns = table.columns
     val colNames = new Array[String](columns.length)
@@ -142,7 +154,24 @@ class MLSQLJDBC(override val uid: String) extends MLSQLSource with MLSQLSink wit
             if (!HDFSOperator.fileExists(finalPath + "/data") || isExpire) {
               table.write.mode(SaveMode.Overwrite).save(finalPath + "/data")
             }
-            newTable = sparkSession.read.parquet(finalPath + "/data")
+            try {
+              sparkSession.read.parquet(finalPath + "/data")
+            } catch {
+              case e: Exception =>
+                logInfo(format_exception(e))
+                table.write.mode(SaveMode.Overwrite).save(finalPath + "/data")
+            }
+
+            try {
+              newTable = sparkSession.read.parquet(finalPath + "/data")
+            } catch {
+              case e: Exception =>
+                logWarning(format(s"we try to cache table ${finalPath}, but it fails:"))
+                logInfo(format_exception(e))
+                newTable = table
+            }
+
+
           }
         } finally {
           logInfo(format(s"${finalPath} is locked by other service, wait and then use"))
@@ -177,9 +206,9 @@ class MLSQLJDBC(override val uid: String) extends MLSQLSource with MLSQLSink wit
 
     config.config.get("idCol").map { item =>
       import org.apache.spark.sql.jdbc.DataFrameWriterExtensions._
-      val extraOptionsField = writer.getClass.getDeclaredField("extraOptions")
-      extraOptionsField.setAccessible(true)
-      val extraOptions = extraOptionsField.get(writer).asInstanceOf[scala.collection.mutable.HashMap[String, String]]
+      val extraOptions = ScalaReflect.fromInstance[DataFrameWriter[Row]](writer)
+        .method("extraOptions").invoke()
+        .asInstanceOf[scala.collection.mutable.HashMap[String, String]]
       val jdbcOptions = new JDBCOptions(extraOptions.toMap + ("dbtable" -> dbtable))
       writer.upsert(Option(item), jdbcOptions, config.df.get)
     }.getOrElse {

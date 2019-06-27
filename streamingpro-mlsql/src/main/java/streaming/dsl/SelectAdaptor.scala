@@ -18,26 +18,20 @@
 
 package streaming.dsl
 
-import scala.collection.mutable
-
 import org.antlr.v4.runtime.misc.Interval
 import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
+import org.apache.spark.sql.catalyst.plans.logical.MLSQLDFParser
 import streaming.dsl.auth.{MLSQLTable, OperateType, TableType}
 import streaming.dsl.parser.DSLSQLLexer
 import streaming.dsl.parser.DSLSQLParser.SqlContext
 import streaming.dsl.template.TemplateMerge
+import tech.mlsql.sql.MLSQLSparkConf
 
 
 /**
   * Created by allwefantasy on 27/8/2017.
   */
 class SelectAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAdaptor {
-
-  val ENABLE_RUNTIME_SELECT_AUTH = scriptSQLExecListener.sparkSession
-    .sparkContext
-    .getConf
-    .getBoolean("spark.mlsql.enable.runtime.select.auth", false)
 
   override def parse(ctx: SqlContext): Unit = {
     val input = ctx.start.getTokenSource().asInstanceOf[DSLSQLLexer]._input
@@ -63,26 +57,10 @@ class SelectAdaptor(scriptSQLExecListener: ScriptSQLExecListener) extends DslAda
 
   def runtimeTableAuth(df: DataFrame): Unit = {
     // enable runtime select auth
-    if (ENABLE_RUNTIME_SELECT_AUTH) {
+    if (MLSQLSparkConf.runtimeSelectAuth) {
       scriptSQLExecListener.getTableAuth.foreach(tableAuth => {
-        var r = Array.empty[String]
-        df.queryExecution.logical.map {
-          case sp: UnresolvedRelation =>
-            r +:= sp.tableIdentifier.unquotedString.toLowerCase
-          case _ =>
-        }
-        var tableAndCols = mutable.HashMap.empty[String, mutable.HashSet[String]]
-        df.queryExecution.analyzed.map(lp => {
-          lp.output.map(o => {
-            val qualifier = o.qualifier.mkString(".")
-            if (r.contains(o.qualifier.mkString("."))) {
-              val value = tableAndCols.getOrElse(qualifier, mutable.HashSet.empty[String])
-              value.add(o.name)
-              tableAndCols.update(qualifier, value)
-            }
-          })
-        })
 
+        val tableAndCols = MLSQLDFParser.extractTableWithColumns(df)
         var mlsqlTables = List.empty[MLSQLTable]
 
         tableAndCols.foreach {

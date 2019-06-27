@@ -63,6 +63,9 @@ class BatchPredict extends Logging with WowLog with Serializable {
     val modelPath = modelMeta.modelEntityPaths.head
 
     val outoutFile = SQLPythonFunc.getAlgTmpPath(_path) + "/output"
+    HDFSOperator.deleteDir(outoutFile)
+    HDFSOperator.createDir(outoutFile)
+
 
     val trainParams = modelMeta.trainParams
     val appName = df.sparkSession.sparkContext.getConf.get("spark.app.name")
@@ -124,14 +127,16 @@ class BatchPredict extends Logging with WowLog with Serializable {
       val taskDirectory = localPathConfig.localRunPath + "/" + projectName
 
       SQLPythonAlg.downloadPythonProject(taskDirectory, Option(pythonProject.get.filePath))
-
+      var message = ""
       val runner = new PythonProjectExecuteRunner(
         taskDirectory = taskDirectory,
         keepLocalDirectory = keepLocalDirectory,
         envVars = envs,
         logCallback = (msg) => {
           ScriptSQLExec.setContextIfNotPresent(mlsqlContext)
-          logInfo(format(msg))
+          val info = format(msg)
+          logInfo(info)
+          message += (info + "\n")
         }
       )
       var trainFailFlag = false
@@ -147,12 +152,12 @@ class BatchPredict extends Logging with WowLog with Serializable {
         )
         res.foreach(f => logInfo(format(f)))
 
-        HDFSOperator.copyToHDFS(localOutputFileStr, outoutFile, cleanTarget = true, cleanSource = false)
+        HDFSOperator.copyToHDFS(localOutputFileStr, outoutFile, cleanTarget = false, cleanSource = false)
 
       } catch {
         case e: Exception =>
-          logError(format_cause(e))
-          e.printStackTrace()
+          val info = format_cause(e)
+          logError(info)
           trainFailFlag = true
       } finally {
         FileUtils.deleteDirectory(new File(localModelPath))
